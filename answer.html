@@ -235,46 +235,27 @@
 
   /* Answer body */
   .qa-body {
-    padding: 12px 16px 14px;
+    padding: 0;
   }
 
-  .qa-point {
-    display: flex;
-    align-items: flex-start;
-    gap: 10px;
-    padding: 6px 0;
-    border-bottom: 1px solid #f0f0f0;
-  }
-
-  .qa-point:last-child {
-    border-bottom: none;
-  }
-
-  .qa-point-num {
-    flex-shrink: 0;
-    width: 22px; height: 22px;
-    background: var(--accent-light);
-    color: var(--accent);
-    border-radius: 50%;
-    font-size: 12px;
-    font-weight: 700;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    margin-top: 2px;
-  }
-
-  .qa-card.latest .qa-point-num {
-    background: var(--accent);
-    color: white;
-  }
-
-  .qa-point-text {
-    font-size: 15px;
-    line-height: 1.55;
+  /* ── Answer hierarchical formatting ── */
+  .qa-answer {
+    padding: 14px 20px 18px;
+    font-size: 16px;
+    line-height: 1.7;
     color: var(--text-primary);
-    flex: 1;
+    word-break: break-word;
   }
+
+  .ans-body { line-height: 1.8; }
+  .ans-l1 { margin-top: 8px; font-weight: 500; color: var(--text-primary); }
+  .ans-l1:first-child { margin-top: 0; }
+  .ans-l2 { padding-left: 0.75em; margin-top: 3px; }
+  .ans-l3 { padding-left: 1.5em; margin-top: 2px; }
+  .ans-l4 { padding-left: 2.25em; margin-top: 2px; }
+  .ans-normal { margin-top: 3px; }
+  .ans-gap { height: 6px; }
+  .ans-empty { color: #999; }
 
   /* ── NEW badge ── */
   .new-badge {
@@ -376,23 +357,65 @@ function setConnected(state) {
   }
 }
 
-// ── Extract key points (same logic as operator) ──
-function extractKeyPoints(text) {
-  if (!text) return [];
-  const numbered = text.split(/(?=[一二三四五六七八九十]、)/);
-  const filtered = numbered.map(s => s.replace(/^[一二三四五六七八九十]、/, '').trim()).filter(s => s.length > 5);
-  if (filtered.length >= 2) return filtered.slice(0, 3);
-  const lines = text.split(/\n|(?<=。)/).map(s => s.trim()).filter(s => s.length > 8);
-  if (lines.length >= 2) return lines.slice(0, 3);
-  return [text.trim().slice(0, 80)];
-}
-
 function escHtml(s) {
   return String(s)
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
+}
+
+// ── Answer Formatter：將純文字答案轉成階層化 HTML ──
+function formatAnswerHtml(text) {
+  if (!text || !text.trim()) return '<span class="ans-empty">（無答案內容）</span>';
+
+  // 預處理：將行內連寫的列點標記拆成獨立行
+  // 例：「（一）租金70萬。（二）辦理方式：...」→ 兩行
+  let processed = text
+    // 在非換行字元後面、（一）類標記前 插入換行
+    .replace(/([^\n])([（(][一二三四五六七八九十百]+[）)])/g, '$1\n$2')
+    // 在非換行字元後面、（1）（2）阿拉伯數字括號標記前 插入換行
+    .replace(/([^\n])([（(]\d+[）)])/g, '$1\n$2')
+    // 在句尾標點後面、一、二、三類標記前 插入換行（避免誤判一般詞語中的 一、）
+    .replace(/([。！？；，])([一二三四五六七八九十百]+、)/g, '$1\n$2')
+    // 在非換行字元後面、數字列點（1. 2.）前 插入換行
+    .replace(/([^\n])(\d+[.．](?=\S))/g, '$1\n$2');
+
+  const lines = processed.split('\n');
+  let html = '<div class="ans-body">';
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trimEnd();
+
+    if (!line.trim()) {
+      html += '<div class="ans-gap"></div>';
+      continue;
+    }
+
+    // 第一層：一、二、三、...（含兩字如十一、）
+    if (/^[一二三四五六七八九十百]+、/.test(line)) {
+      html += `<div class="ans-l1">${escHtml(line)}</div>`;
+    }
+    // 第二層：(一)(二)... 或全形（一）（二）
+    else if (/^[（(][一二三四五六七八九十百]+[）)]/.test(line)) {
+      html += `<div class="ans-l2">${escHtml(line)}</div>`;
+    }
+    // 第三層：1. 2. 3. 或 1、2、
+    else if (/^\d+[.、．]/.test(line)) {
+      html += `<div class="ans-l3">${escHtml(line)}</div>`;
+    }
+    // 第四層：(1)(2)... 或全形（1）（2）— 阿拉伯數字括號列點，比 1.2.3. 更深
+    else if (/^[（(]\d+[）)]/.test(line)) {
+      html += `<div class="ans-l4">${escHtml(line)}</div>`;
+    }
+    // 一般文字（含表格拆解後的逐行資料）
+    else {
+      html += `<div class="ans-normal">${escHtml(line)}</div>`;
+    }
+  }
+
+  html += '</div>';
+  return html;
 }
 
 // ── Render matches ──
@@ -424,11 +447,10 @@ function renderMatches(matches) {
             <div class="qa-question">${escHtml(m.question)}${badge}</div>
           </div>
           <div class="qa-body">
-            <div class="custom-text">${escHtml(m.custom_text || m.short_answer || '')}</div>
+            <div class="qa-answer"><div class="custom-text">${escHtml(m.custom_text || m.short_answer || '')}</div></div>
           </div>
         </div>`;
     } else {
-      const points = extractKeyPoints(m.short_answer || m.detail_answer || '');
       html += `
         <div class="qa-card${isLatest ? ' latest' : ''}">
           <div class="qa-header">
@@ -436,12 +458,7 @@ function renderMatches(matches) {
             <div class="qa-question">${escHtml(m.question)}${m.page ? `<span class="page-badge">p.${m.page}</span>` : ''}${badge}</div>
           </div>
           <div class="qa-body">
-            ${points.map((pt, i) => `
-              <div class="qa-point">
-                <div class="qa-point-num">${i + 1}</div>
-                <div class="qa-point-text">${escHtml(pt)}</div>
-              </div>
-            `).join('')}
+            <div class="qa-answer">${formatAnswerHtml(m.short_answer || m.detail_answer || '')}</div>
           </div>
         </div>`;
     }
